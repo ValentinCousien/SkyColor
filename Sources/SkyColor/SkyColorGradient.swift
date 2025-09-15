@@ -1,27 +1,45 @@
 import SwiftUI
 import CoreLocation
 
+#if canImport(UIKit)
+import UIKit
+typealias PlatformColor = UIColor
+#elseif canImport(AppKit)
+import AppKit
+typealias PlatformColor = NSColor
+#endif
+
+/// A public SwiftUI view that provides a dynamic sky color gradient background
+/// that changes throughout the day based on astronomical calculations.
 @available(iOS 15.0, *)
-struct SkyColorView: View {
+public struct SkyColorGradient: View {
     @State private var currentTime = Date()
-    @State private var demoMode = false
-    @State private var demoHour: Double = 12
     @State private var sunriseTime: Date?
     @State private var sunsetTime: Date?
     @State private var location: CLLocation?
     @StateObject private var locationDelegate = LocationDelegate()
-
-    let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
-
-    // Current time components
-    private var hour: Int {
-        Calendar.current.component(.hour, from: currentTime)
+    
+    private let demoTime: Date?
+    private let customLocation: CLLocation?
+    
+    /// Initialize with real-time updates
+    public init() {
+        self.demoTime = nil
+        self.customLocation = nil
     }
-
-    private var minute: Int {
-        Calendar.current.component(.minute, from: currentTime)
+    
+    /// Initialize with a specific time for demonstration purposes
+    public init(demoTime: Date) {
+        self.demoTime = demoTime
+        self.customLocation = nil
     }
-
+    
+    /// Initialize with a custom location and optional demo time
+    public init(location: CLLocation, demoTime: Date? = nil) {
+        self.customLocation = location
+        self.demoTime = demoTime
+    }
+    
     // Key hours of the day (dawn, sunrise, sunset, dusk)
     private var hourOfSunrise: Double {
         guard let sunrise = sunriseTime else { return 6.0 }
@@ -49,13 +67,10 @@ struct SkyColorView: View {
 
     // Get hour with minutes for smoother transitions
     private var hourWithMinutes: Double {
-        if demoMode {
-            return demoHour
-        } else {
-            let hour = Double(Calendar.current.component(.hour, from: currentTime))
-            let minute = Double(Calendar.current.component(.minute, from: currentTime))
-            return hour + (minute / 60.0)
-        }
+        let timeToUse = demoTime ?? currentTime
+        let hour = Double(Calendar.current.component(.hour, from: timeToUse))
+        let minute = Double(Calendar.current.component(.minute, from: timeToUse))
+        return hour + (minute / 60.0)
     }
 
     // Create color gradient with smooth transitions
@@ -103,21 +118,21 @@ struct SkyColorView: View {
             // Convert colors for interpolation
             let factor = min(max(factor, 0.0), 1.0)
 
-            // Create interpolated color using UIColor as intermediary
-            let startUIColor = UIColor(start)
-            let endUIColor = UIColor(end)
+            // Create interpolated color using platform-specific color intermediary
+            let startPlatformColor = PlatformColor(start)
+            let endPlatformColor = PlatformColor(end)
 
             var red1: CGFloat = 0
             var green1: CGFloat = 0
             var blue1: CGFloat = 0
             var alpha1: CGFloat = 0
-            startUIColor.getRed(&red1, green: &green1, blue: &blue1, alpha: &alpha1)
+            startPlatformColor.getRed(&red1, green: &green1, blue: &blue1, alpha: &alpha1)
 
             var red2: CGFloat = 0
             var green2: CGFloat = 0
             var blue2: CGFloat = 0
             var alpha2: CGFloat = 0
-            endUIColor.getRed(&red2, green: &green2, blue: &blue2, alpha: &alpha2)
+            endPlatformColor.getRed(&red2, green: &green2, blue: &blue2, alpha: &alpha2)
 
             let r = red1 + CGFloat(factor) * (red2 - red1)
             let g = green1 + CGFloat(factor) * (green2 - green1)
@@ -166,9 +181,75 @@ struct SkyColorView: View {
             endPoint: .top
         )
     }
+    
+    public var body: some View {
+        backgroundGradient
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: 1.0), value: hourWithMinutes)
+            .onAppear {
+                if customLocation == nil {
+                    requestLocation()
+                } else {
+                    location = customLocation
+                }
+                calculateSunriseSunset()
+                
+                // Start timer for real-time updates (only if not in demo mode)
+                if demoTime == nil {
+                    startTimer()
+                }
+            }
+    }
+    
+    private func startTimer() {
+        // Simple timer that updates every minute
+        Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { _ in
+            DispatchQueue.main.async {
+                self.currentTime = Date()
+                
+                // Recalculate sunrise/sunset at midnight
+                let calendar = Calendar.current
+                if calendar.component(.hour, from: self.currentTime) == 0 &&
+                   calendar.component(.minute, from: self.currentTime) == 0 {
+                    self.calculateSunriseSunset()
+                }
+            }
+        }
+    }
+    
+    private func requestLocation() {
+        locationDelegate.requestLocation()
+    }
 
-    // Text color that adapts to background with smooth transition
-    private var textColor: Color {
+    private func calculateSunriseSunset() {
+        let locationToUse = customLocation ?? locationDelegate.location
+        
+        guard let location = locationToUse else {
+            // Use default times if no location is available
+            let calendar = Calendar.current
+
+            // Default sunrise at 6:00 AM
+            self.sunriseTime = calendar.date(bySettingHour: 6, minute: 0, second: 0, of: Date())
+
+            // Default sunset at 8:00 PM
+            self.sunsetTime = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: Date())
+            return
+        }
+
+        // Use astronomical calculations to determine sunrise and sunset times
+        let timeToUse = demoTime ?? currentTime
+        let solar = Solar(coordinate: location.coordinate, date: timeToUse)
+        self.sunriseTime = solar?.sunrise
+        self.sunsetTime = solar?.sunset
+    }
+}
+
+// MARK: - Public Extensions
+
+@available(iOS 15.0, *)
+extension SkyColorGradient {
+    /// Returns the adaptive text color that works well with the current sky gradient
+    public var adaptiveTextColor: Color {
         let time = hourWithMinutes
 
         // Smooth transition between white and black based on real sunrise/sunset
@@ -190,27 +271,9 @@ struct SkyColorView: View {
             return .black
         }
     }
-
-    // Function for text color interpolation
-    private func interpolateTextColor(factor: Double) -> Color {
-        let clampedFactor = min(max(factor, 0.0), 1.0)
-        return Color(
-            red: clampedFactor,
-            green: clampedFactor,
-            blue: clampedFactor,
-            opacity: 1.0
-        )
-    }
-
-    // Format current time
-    private var timeString: String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: currentTime)
-    }
-
-    // Descriptive text of time of day with smoother transitions
-    private var timeOfDayText: String {
+    
+    /// Returns a descriptive string of the current time of day
+    public var timeOfDayDescription: String {
         let time = hourWithMinutes
 
         // Use calculated hours to describe time of day
@@ -242,128 +305,30 @@ struct SkyColorView: View {
             return "Night"
         }
     }
-
-    var body: some View {
-        ZStack {
-            backgroundGradient
-                .ignoresSafeArea()
-                .animation(.easeInOut(duration: 1.0), value: hourWithMinutes)
-
-            VStack {
-                if demoMode {
-                    Text(String(format: "Demo mode: %.1fh", demoHour))
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(textColor)
-                        .padding()
-                        .animation(.easeInOut, value: demoHour)
-
-                    Slider(value: $demoHour, in: 0...24, step: 0.1)
-                        .padding(.horizontal, 40)
-                        .accentColor(textColor.opacity(0.8))
-                        .animation(.easeInOut, value: demoHour)
-
-                    Text(timeOfDayText)
-                        .font(.title2)
-                        .foregroundColor(textColor)
-
-                    Button(action: {
-                        self.demoMode = false
-                        self.currentTime = Date()
-                    }) {
-                        Text("Return to real time")
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(Color.blue)
-                            .cornerRadius(10)
-                    }
-                    .padding()
-                } else {
-                    Text(timeString)
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(textColor)
-                        .padding()
-
-                    Text(timeOfDayText)
-                        .font(.title2)
-                        .foregroundColor(textColor)
-
-                    if let sunrise = sunriseTime, let sunset = sunsetTime {
-                        Text("Sunrise: \(formatTime(sunrise)) • Sunset: \(formatTime(sunset))")
-                            .font(.subheadline)
-                            .foregroundColor(textColor)
-                            .padding(.bottom)
-                    }
-
-                    Button(action: {
-                        self.demoMode = true
-                        self.demoHour = Double(hour) + (Double(minute) / 60.0)
-                    }) {
-                        Text("Demo mode")
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(Color.blue)
-                            .cornerRadius(10)
-                    }
-                    .padding()
-                }
-            }
-        }
-        .onAppear {
-            requestLocation()
-            calculateSunriseSunset()
-        }
-        .onReceive(timer) { _ in
-            if !demoMode {
-                self.currentTime = Date()
-
-                // Recalculate sunrise/sunset at midnight
-                let calendar = Calendar.current
-                if calendar.component(.hour, from: currentTime) == 0 &&
-                   calendar.component(.minute, from: currentTime) == 0 {
-                    calculateSunriseSunset()
-                }
-            }
-        }
+    
+    /// Returns the current sunrise time if available
+    var sunrise: Date? {
+        return sunriseTime
     }
-
-    private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
-    }
-
-    private func requestLocation() {
-        locationDelegate.requestLocation()
-    }
-
-    private func calculateSunriseSunset() {
-        guard let location = locationDelegate.location else {
-            // Use default times if no location is available
-            let calendar = Calendar.current
-
-            // Default sunrise at 6:00 AM
-            self.sunriseTime = calendar.date(bySettingHour: 6, minute: 0, second: 0, of: Date())
-
-            // Default sunset at 8:00 PM
-            self.sunsetTime = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: Date())
-            return
-        }
-
-        // Use astronomical calculations to determine sunrise and sunset times
-        let solar = Solar(coordinate: location.coordinate, date: currentTime)
-        self.sunriseTime = solar?.sunrise
-        self.sunsetTime = solar?.sunset
+    
+    /// Returns the current sunset time if available
+    var sunset: Date? {
+        return sunsetTime
     }
 }
 
-#if DEBUG
+// MARK: - Internal Helper Methods
+
 @available(iOS 15.0, *)
-struct TimeBasedBackgroundView_Previews: PreviewProvider {
-    static var previews: some View {
-        SkyColorView()
+extension SkyColorGradient {
+    // Function for text color interpolation
+    func interpolateTextColor(factor: Double) -> Color {
+        let clampedFactor = min(max(factor, 0.0), 1.0)
+        return Color(
+            red: clampedFactor,
+            green: clampedFactor,
+            blue: clampedFactor,
+            opacity: 1.0
+        )
     }
 }
-#endif

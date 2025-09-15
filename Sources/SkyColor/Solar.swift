@@ -1,6 +1,8 @@
 import CoreLocation
 import Foundation
 
+// MARK: - Internal Supporting Classes
+
 // Class to calculate sunrise/sunset times
 // Based on astronomical calculation algorithm
 class Solar {

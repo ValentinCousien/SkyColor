@@ -1,5 +1,7 @@
 import Foundation
 
+// MARK: - Internal Supporting Extensions
+
 // Extension to convert between degrees and radians
 extension Double {
     var degreesToRadians: Double {

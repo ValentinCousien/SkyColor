@@ -1,6 +1,8 @@
 import SwiftUI
 import CoreLocation
 
+// MARK: - Internal Supporting Classes
+
 // Class to manage location
 @available(iOS 15.0, *)
 class LocationDelegate: NSObject, ObservableObject, CLLocationManagerDelegate {
